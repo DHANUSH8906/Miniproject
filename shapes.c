@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <windows.h>
+#include <math.h>
 
 #define WIDTH 60
 #define HEIGHT 22
@@ -24,11 +25,6 @@ typedef enum {
     SHAPE_TRIANGLE
 } ShapeType;
 
-typedef struct { int x1, y1, x2, y2; } LineData;
-typedef struct { int x, y, width, height; } RectData;
-typedef struct { int cx, cy, radius; } CircleData;
-typedef struct { int x1, y1, x2, y2, x3, y3; } TriangleData;
-
 typedef struct {
     int id;
     int active;
@@ -37,12 +33,23 @@ typedef struct {
     char color;
     int is_filled;
     union {
-        LineData line;
-        RectData rect;
-        CircleData circle;
-        TriangleData triangle;
+        struct { float x, y, width, height; } rect;
+        struct { float cx, cy, radius; } circle;
+        struct { float x1, y1, x2, y2, x3, y3; } triangle;
+        struct { float x1, y1, x2, y2; } line;
     } data;
 } Shape;
+
+// --- Global Camera State ---
+float camera_x = 0.0f;
+float camera_y = 0.0f;
+float zoom = 1.0f;
+
+// --- Coordinate Helpers ---
+float s2w_x(int sx) { return (sx - WIDTH / 2.0f) / zoom + camera_x; }
+float s2w_y(int sy) { return (sy - HEIGHT / 2.0f) / zoom + camera_y; }
+int w2s_x(float wx) { return (int)roundf((wx - camera_x) * zoom + WIDTH / 2.0f); }
+int w2s_y(float wy) { return (int)roundf((wy - camera_y) * zoom + HEIGHT / 2.0f); }
 
 typedef struct {
     char ch;
@@ -220,21 +227,21 @@ void render() {
             Shape* s = &shapes[i];
             switch (s->type) {
                 case SHAPE_LINE:
-                    drawLine(s->data.line.x1, s->data.line.y1, 
-                             s->data.line.x2, s->data.line.y2, s->draw_char, s->color);
+                    drawLine(w2s_x(s->data.line.x1), w2s_y(s->data.line.y1), 
+                             w2s_x(s->data.line.x2), w2s_y(s->data.line.y2), s->draw_char, s->color);
                     break;
                 case SHAPE_RECTANGLE:
-                    drawRectangle(s->data.rect.x, s->data.rect.y, 
-                                  s->data.rect.width, s->data.rect.height, s->draw_char, s->color, s->is_filled);
+                    drawRectangle(w2s_x(s->data.rect.x), w2s_y(s->data.rect.y), 
+                                  (int)roundf(s->data.rect.width * zoom), (int)roundf(s->data.rect.height * zoom), s->draw_char, s->color, s->is_filled);
                     break;
                 case SHAPE_CIRCLE:
-                    drawCircle(s->data.circle.cx, s->data.circle.cy, 
-                               s->data.circle.radius, s->draw_char, s->color, s->is_filled);
+                    drawCircle(w2s_x(s->data.circle.cx), w2s_y(s->data.circle.cy), 
+                               (int)roundf(s->data.circle.radius * zoom), s->draw_char, s->color, s->is_filled);
                     break;
                 case SHAPE_TRIANGLE:
-                    drawTriangle(s->data.triangle.x1, s->data.triangle.y1,
-                                 s->data.triangle.x2, s->data.triangle.y2,
-                                 s->data.triangle.x3, s->data.triangle.y3, s->draw_char, s->color, s->is_filled);
+                    drawTriangle(w2s_x(s->data.triangle.x1), w2s_y(s->data.triangle.y1),
+                                 w2s_x(s->data.triangle.x2), w2s_y(s->data.triangle.y2),
+                                 w2s_x(s->data.triangle.x3), w2s_y(s->data.triangle.y3), s->draw_char, s->color, s->is_filled);
                     break;
             }
         }
@@ -291,6 +298,10 @@ void drawUI() {
     
     gotoxy(mx, 21); printf("[-] Undo Last");
     gotoxy(mx, 22); printf("[X] Clear All");
+
+    // Camera Controls
+    gotoxy(mx - 15, HEIGHT + 3); printf("Zoom: %.1fx", zoom);
+    gotoxy(mx, HEIGHT + 3); printf("[+]/[-] Zoom | Arrows Pan");
     gotoxy(mx, 23); printf("[Q] Quit     ");
     
     // Debug info at the bottom
@@ -309,35 +320,38 @@ void handleMouseClick(int mouse_y, int mouse_x) {
         s.is_filled = current_fill;
         s.draw_char = '*';
 
+        float wx = s2w_x(cx);
+        float wy = s2w_y(cy);
+
         if (current_shape == SHAPE_RECTANGLE) {
             s.type = SHAPE_RECTANGLE;
-            s.data.rect.x = cx - 5;
-            s.data.rect.y = cy - 3;
-            s.data.rect.width = 10;
-            s.data.rect.height = 6;
+            s.data.rect.x = wx - 5.0f;
+            s.data.rect.y = wy - 3.0f;
+            s.data.rect.width = 10.0f;
+            s.data.rect.height = 6.0f;
             addObject(s);
         } else if (current_shape == SHAPE_CIRCLE) {
             s.type = SHAPE_CIRCLE;
-            s.data.circle.cx = cx;
-            s.data.circle.cy = cy;
-            s.data.circle.radius = 5;
+            s.data.circle.cx = wx;
+            s.data.circle.cy = wy;
+            s.data.circle.radius = 5.0f;
             addObject(s);
         } else if (current_shape == SHAPE_LINE) {
             s.type = SHAPE_LINE;
-            s.data.line.x1 = cx - 4;
-            s.data.line.y1 = cy - 2;
-            s.data.line.x2 = cx + 4;
-            s.data.line.y2 = cy + 2;
+            s.data.line.x1 = wx - 4.0f;
+            s.data.line.y1 = wy - 2.0f;
+            s.data.line.x2 = wx + 4.0f;
+            s.data.line.y2 = wy + 2.0f;
             s.is_filled = 0;
             addObject(s);
         } else if (current_shape == SHAPE_TRIANGLE) {
             s.type = SHAPE_TRIANGLE;
-            s.data.triangle.x1 = cx;
-            s.data.triangle.y1 = cy - 4;
-            s.data.triangle.x2 = cx - 8;
-            s.data.triangle.y2 = cy + 4;
-            s.data.triangle.x3 = cx + 8;
-            s.data.triangle.y3 = cy + 4;
+            s.data.triangle.x1 = wx;
+            s.data.triangle.y1 = wy - 4.0f;
+            s.data.triangle.x2 = wx - 8.0f;
+            s.data.triangle.y2 = wy + 4.0f;
+            s.data.triangle.x3 = wx + 8.0f;
+            s.data.triangle.y3 = wy + 4.0f;
             addObject(s);
         }
     } 
@@ -446,12 +460,18 @@ void handleMouseClick(int mouse_y, int mouse_x) {
                                 char type;
                                 if (sscanf(seq + 3, "%d;%d;%d%c", &btn, &mx, &my, &type) == 4) {
                                     if (type == 'M' && (btn == 0 || btn == 32)) { 
-                                        // Convert 1-based VT coords to 0-based
                                         handleMouseClick(my - 1, mx - 1);
                                         ui_needs_redraw = 1;
                                     }
                                 }
                             }
+                            
+                            // Check for Arrow Keys (VT Sequences)
+                            if (strcmp(seq, "\x1b[A") == 0) { camera_y -= 2.0f / zoom; ui_needs_redraw = 1; } // UP
+                            if (strcmp(seq, "\x1b[B") == 0) { camera_y += 2.0f / zoom; ui_needs_redraw = 1; } // DOWN
+                            if (strcmp(seq, "\x1b[C") == 0) { camera_x += 4.0f / zoom; ui_needs_redraw = 1; } // RIGHT
+                            if (strcmp(seq, "\x1b[D") == 0) { camera_x -= 4.0f / zoom; ui_needs_redraw = 1; } // LEFT
+
                             in_esc = 0;
                         }
                     } else {
@@ -462,6 +482,18 @@ void handleMouseClick(int mouse_y, int mouse_x) {
                             printf("\x1b[?1049l"); // Leave alternate buffer
                             fflush(stdout);
                             return 0;
+                        } else if (c == '+' || c == '=') {
+                            zoom *= 1.2f;
+                            ui_needs_redraw = 1;
+                        } else if (c == '-') {
+                            zoom /= 1.2f;
+                            ui_needs_redraw = 1;
+                        } else {
+                            WORD vk = ker.wVirtualKeyCode;
+                            if (vk == VK_UP) { camera_y -= 2.0f / zoom; ui_needs_redraw = 1; }
+                            else if (vk == VK_DOWN) { camera_y += 2.0f / zoom; ui_needs_redraw = 1; }
+                            else if (vk == VK_LEFT) { camera_x -= 4.0f / zoom; ui_needs_redraw = 1; }
+                            else if (vk == VK_RIGHT) { camera_x += 4.0f / zoom; ui_needs_redraw = 1; }
                         }
                     }
                 }
